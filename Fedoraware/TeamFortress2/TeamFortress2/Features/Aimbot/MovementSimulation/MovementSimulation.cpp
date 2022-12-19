@@ -113,6 +113,7 @@ bool CMovementSimulation::Initialize(CBaseEntity* pPlayer)
 	m_bOldInPrediction = I::Prediction->m_bInPrediction;
 	m_bOldFirstTimePredicted = I::Prediction->m_bFirstTimePredicted;
 	m_flOldFrametime = I::GlobalVars->frametime;
+	bDontPredict = false;
 
 	//the hacks that make it work
 	{
@@ -244,9 +245,6 @@ bool CMovementSimulation::StrafePrediction()
 		flInitialYaw = 0.f;
 		bFirstRunTick = false;	//	if we fail the math here, don't try it again, it won't work.
 
-		const int iSamples = Vars::Aimbot::Projectile::StrafePredictionSamples.Value;
-		if (!iSamples) { return false; }
-
 		if (const auto& pLocal = g_EntityCache.GetLocal())
 		{
 			if (pLocal->GetAbsOrigin().DistTo(m_pPlayer->GetAbsOrigin()) > Vars::Aimbot::Projectile::StrafePredictionMaxDistance.Value)
@@ -259,10 +257,13 @@ bool CMovementSimulation::StrafePrediction()
 
 		const auto& mVelocityRecord = m_Velocities[iEntIndex];
 
-		if (static_cast<int>(mVelocityRecord.size()) != iSamples)
+		if (static_cast<int>(mVelocityRecord.size()) < 1)
 		{
 			return false;
 		}
+
+		const int iSamples = fmin(Vars::Aimbot::Projectile::StrafePredictionSamples.Value, mVelocityRecord.size());
+		if (!iSamples) { return false; }
 
 		flInitialYaw = Math::VelocityToAngles(m_MoveData.m_vecVelocity).y;
 		float flCompareYaw = flInitialYaw;
@@ -288,6 +289,15 @@ bool CMovementSimulation::StrafePrediction()
 			return false;
 		}
 
+		const float flMaxDelta = (60.f / fmaxf((float)iSamples / 2.f, 1.f));
+
+		Utils::ConLog("MovementSimulation", tfm::format("flMaxDelta calculated to %f", flMaxDelta).c_str(), { 83, 255, 83, 255 });
+
+		if (fabsf(flAverageYaw) > flMaxDelta) {
+			m_Velocities[m_pPlayer->GetIndex()].clear();
+			return false;
+		}	//	ugly fix for sweaty pricks
+
 		if (Vars::Debug::DebugInfo.Value)
 		{
 			Utils::ConLog("MovementSimulation", tfm::format("flAverageYaw calculated to %f", flAverageYaw).c_str(), { 83, 255, 83, 255 });
@@ -303,7 +313,7 @@ bool CMovementSimulation::StrafePrediction()
 
 void CMovementSimulation::RunTick(CMoveData& moveDataOut, Vec3& m_vecAbsOrigin)
 {
-	if (!I::CTFGameMovement || !m_pPlayer)
+	if (!I::CTFGameMovement || !m_pPlayer || bDontPredict)
 	{
 		return;
 	}
